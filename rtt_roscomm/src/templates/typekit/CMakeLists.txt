@@ -8,6 +8,8 @@ endif()
 
 include(AddFileDependencies)
 
+OPTION(ENABLE_CORBA "" ON)
+
 # mqueue transport
 OPTION(ENABLE_MQ "Build posix message queue transport plugin for ${_package}" OFF)
 if(ENABLE_MQ)
