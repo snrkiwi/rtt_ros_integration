@@ -52,9 +52,20 @@
 #include <dynamic_reconfigure/Config.h>
 #include <dynamic_reconfigure/ConfigDescription.h>
 
+#include <rtt/rtt-config.h>
+#if !defined(RTT_VERSION_GTE)
+    #define RTT_VERSION_GTE(major,minor,patch) \
+        ((RTT_VERSION_MAJOR > major) || (RTT_VERSION_MAJOR == major && \
+         (RTT_VERSION_MINOR > minor) || (RTT_VERSION_MINOR == minor && \
+         (RTT_VERSION_PATCH >= patch))))
+#endif
+
 namespace rtt_dynamic_reconfigure {
 
 template <class ConfigType> class Server;
+typedef bool (UpdateCallbackSignature)(RTT::PropertyBag &bag, uint32_t level);
+typedef bool (UpdateCallbackConstSignature)(const RTT::PropertyBag &bag, uint32_t level);
+typedef void (NotifyCallbackSignature)(uint32_t level);
 
 /**
  * This class converts between a dynamic_reconfigure Config class and an RTT::PropertyBag.
@@ -118,7 +129,7 @@ struct dynamic_reconfigure_traits {
     /**
      * Convert an instance of ConfigType to a dynamic_reconfigure::Config message
      *
-     * \param config referencte to the ConfigType instance to be read
+     * \param config reference to the ConfigType instance to be read
      * \param message reference to the Config message to be filled
      * \param server pointer to the rtt_dynamic_reconfigure server instance (only used for AutoConfig)
      */
@@ -127,7 +138,7 @@ struct dynamic_reconfigure_traits {
     /**
      * Convert a dynamic_reconfigure::Config message to an instance of ConfigType
      *
-     * \param config referencte to the ConfigType instance to be filled
+     * \param config reference to the ConfigType instance to be filled
      * \param message reference to the Config message to be read
      * \param server pointer to the rtt_dynamic_reconfigure server instance (only used for AutoConfig)
      */
@@ -161,6 +172,9 @@ namespace {
   };
 }
 
+// Forward declaration of class DynamicReconfigureTestComponent
+class DynamicReconfigureTestComponent;
+
 /**
  * The Server<ConfigType> class implements a dynamic_reconfigure server as an RTT service.
  * It provides a similar API than the pure cpp dynamic_reconfigure server implemented in the <a href="http://wiki.ros.org/dynamic_reconfigure">dynamic_reconfigure</a> package.
@@ -187,9 +201,10 @@ private:
     mutable boost::shared_ptr<UpdaterType> updater_;
     bool initialized_;
 
-    RTT::OperationCaller<bool(const RTT::PropertyBag &source, uint32_t level)> update_callback_;
-    RTT::OperationCaller<void(uint32_t level)> notify_callback_;
-    RTT::Operation<bool(const RTT::PropertyBag &source, uint32_t level)> update_callback_default_impl_;
+    RTT::OperationCaller<UpdateCallbackSignature> update_callback_;
+    RTT::OperationCaller<UpdateCallbackConstSignature> update_callback_const_;
+    RTT::Operation<UpdateCallbackConstSignature> update_callback_default_impl_;
+    RTT::OperationCaller<NotifyCallbackSignature> notify_callback_;
 
 public:
     /**
@@ -226,6 +241,13 @@ public:
     virtual ~Server() {
         shutdown();
     }
+
+    /**
+     * Get the current configuration parameters
+     *
+     * \return a const reference to the ConfigType instance holding the current values
+     */
+    const ConfigType &getConfig() const { return config_; }
 
     /**
      * Update the config from an instance of ConfigType
@@ -454,8 +476,65 @@ public:
         // At startup we need to load the configuration with all level bits set (everything has changed).
         RTT::PropertyBag init_config;
         updater()->propertiesFromConfig(config_, ~0, init_config);
-        update_callback_(init_config, ~0);
-        if (notify_callback_.ready()) notify_callback_(~0);
+
+        // Invoke update and notification callback
+#if !RTT_VERSION_GTE(2,8,99)
+        // Additional check for RTT < 2.9:
+        // ===============================
+        // We do not know for sure which thread is calling this method/operation, but we can check if the current
+        // thread is the same as the thread that will process the update/notify operation. If yes, we clone the
+        // underlying OperationCaller implementation and set the caller to the processing engine. In this case
+        // RTT < 2.9 should always call the operation directly as if it would be a ClientThread operation:
+        // https://github.com/orocos-toolchain/rtt/blob/toolchain-2.8/rtt/base/OperationCallerInterface.hpp#L79
+        //
+        // RTT 2.9 and above already checks the caller thread internally and therefore does not require this hack.
+        //
+        RTT::base::OperationCallerBase<UpdateCallbackSignature>::shared_ptr update_callback_impl = update_callback_.getOperationCallerImpl();
+        if (update_callback_impl) {
+            RTT::ExecutionEngine *engine = update_callback_impl->getMessageProcessor();
+            if (update_callback_impl->isSend() && engine && engine->getThread() && engine->getThread()->isSelf()) {
+                RTT::Logger::In in(this->getOwner()->getName() + "." + this->getName());
+                RTT::log(RTT::Debug) << "calling my own updateProperties operation from refresh()" << RTT::endlog();
+                update_callback_impl.reset(update_callback_impl->cloneI(engine));
+                update_callback_impl->call(init_config, ~0);
+            } else {
+                update_callback_(init_config, ~0);
+            }
+        }
+        RTT::base::OperationCallerBase<UpdateCallbackConstSignature>::shared_ptr update_callback_const_impl = update_callback_const_.getOperationCallerImpl();
+        if (update_callback_const_impl) {
+            RTT::ExecutionEngine *engine = update_callback_const_impl->getMessageProcessor();
+            if (update_callback_const_impl->isSend() && engine && engine->getThread() && engine->getThread()->isSelf()) {
+                RTT::Logger::In in(this->getOwner()->getName() + "." + this->getName());
+                RTT::log(RTT::Debug) << "calling my own updateProperties operation from refresh()" << RTT::endlog();
+                update_callback_const_impl.reset(update_callback_const_impl->cloneI(engine));
+                update_callback_const_impl->call(init_config, ~0);
+            } else {
+                update_callback_const_(init_config, ~0);
+            }
+        }
+        RTT::base::OperationCallerBase<NotifyCallbackSignature>::shared_ptr notify_callback_impl = notify_callback_.getOperationCallerImpl();
+        if (notify_callback_impl) {
+            RTT::ExecutionEngine *engine = notify_callback_impl->getMessageProcessor();
+            if (notify_callback_impl->isSend() && engine && engine->getThread() && engine->getThread()->isSelf()) {
+                RTT::Logger::In in(this->getOwner()->getName() + "." + this->getName());
+                RTT::log(RTT::Debug) << "calling my own notifyPropertiesUpdate operation from refresh()" << RTT::endlog();
+                notify_callback_impl.reset(notify_callback_impl->cloneI(engine));
+                notify_callback_impl->call(~0);
+            } else {
+                notify_callback_(~0);
+            }
+        }
+#else
+        if (update_callback_.ready()) {
+            update_callback_(init_config, ~0);
+        } else if (update_callback_const_.ready()) {
+            update_callback_const_(init_config, ~0);
+        }
+        if (notify_callback_.ready()) {
+            notify_callback_(~0);
+        }
+#endif
 
         updateConfigInternal(config_);
     }
@@ -520,19 +599,25 @@ private:
         if (updater) setUpdater(updater);
 
         // check if owner provides the updateProperties operation
-        if (getOwner() && getOwner()->provides()->hasOperation("updateProperties")) {
-            update_callback_ = getOwner()->provides()->getLocalOperation("updateProperties");
+        if (getOwner() && getOwner()->provides()->hasMember("updateProperties")) {
+            RTT::OperationInterfacePart *op = getOwner()->provides()->getPart("updateProperties");
+            if (boost::dynamic_pointer_cast< RTT::base::OperationCallerBase<UpdateCallbackSignature> >(op->getLocalOperation())) {
+                update_callback_ = op;
+            } else {
+                update_callback_const_ = op;
+            }
         } else {
-            update_callback_ = update_callback_default_impl_.getOperationCaller();
+            update_callback_const_ = update_callback_default_impl_.getOperationCaller();
         }
 
         // check if owner provides the notifyPropertiesUpdate operation
-        if (getOwner() && getOwner()->provides()->hasOperation("notifyPropertiesUpdate")) {
-            notify_callback_ = getOwner()->provides()->getLocalOperation("notifyPropertiesUpdate");
+        if (getOwner() && getOwner()->provides()->hasMember("notifyPropertiesUpdate")) {
+            notify_callback_ = getOwner()->provides()->getPart("notifyPropertiesUpdate");
         }
 
         // update_callback_ and notify_callback_ are called from the ROS spinner thread -> set GlobalEngine as caller engine
         update_callback_.setCaller(RTT::internal::GlobalEngine::Instance());
+        update_callback_const_.setCaller(RTT::internal::GlobalEngine::Instance());
         notify_callback_.setCaller(RTT::internal::GlobalEngine::Instance());
 
         // refresh once
@@ -544,6 +629,7 @@ private:
         descr_pub_.publish(getDescriptionMessage());
     }
 
+    friend class DynamicReconfigureTestComponent;
     bool setConfigCallback(dynamic_reconfigure::Reconfigure::Request &req,
                            dynamic_reconfigure::Reconfigure::Response &rsp)
     {
@@ -556,7 +642,14 @@ private:
 
         RTT::PropertyBag bag;
         if (!updater()->propertiesFromConfig(new_config, level, bag)) return false;
-        if (!update_callback_.ready() || !update_callback_(bag, level)) return false;
+        if (update_callback_.ready()) {
+            if (!update_callback_(bag, level)) return false;
+            updater()->configFromProperties(new_config, bag);
+        } else if (update_callback_const_.ready()) {
+            if (!update_callback_const_(bag, level)) return false;
+        } else {
+            return false;
+        }
         if (notify_callback_.ready()) notify_callback_(level);
 
         updateConfigInternal(new_config);
@@ -577,9 +670,9 @@ private:
             update_pub_.publish(msg);
     }
 
-    bool updatePropertiesDefaultImpl(const RTT::PropertyBag &source, uint32_t)
+    bool updatePropertiesDefaultImpl(const RTT::PropertyBag &bag, uint32_t)
     {
-        return RTT::updateProperties(*(getOwner()->properties()), source);
+        return RTT::updateProperties(*(getOwner()->properties()), bag);
     }
 };
 

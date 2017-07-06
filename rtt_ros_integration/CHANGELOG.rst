@@ -2,6 +2,33 @@
 Orocos RTT/ROS Integration Changelog
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+2.9.0 (2017-05-02)
+------------------
+* Added individual changelogs and bumped versions to 2.9.0
+* Contributors: Johannes Meyer
+
+2.8.5 (2017-03-28)
+------------------
+
+2.8.4 (2016-11-26)
+------------------
+
+2.8.3 (2016-07-20)
+------------------
+* Please check the changelogs of the individual packages, e.g.:
+
+  - `rtt_roscomm <../rtt_roscomm/CHANGELOG.rst>`_
+  - `rtt_rosclock <../rtt_rosclock/CHANGELOG.rst>`_
+  - `rtt_rosparam <../rtt_rosparam/CHANGELOG.rst>`_
+  - `rtt_dynamic_reconfigure <../rtt_dynamic_reconfigure/CHANGELOG.rst>`_
+  - ...
+
+2.8.2 (2015-06-12)
+-----------
+
+2.8.1 (2015-03-16)
+------------------
+
 2.7.x
 =====
 
@@ -61,8 +88,8 @@ with ROS parameter server parameters.
 See each package's individual CHANGELOG.rst for more details.
 
 
-2.7.0 (forthcoming)
--------------------
+2.7.0 (2013-12-15)
+------------------
 * Major reorganization (see additional notes in CHANGELOG.rst)
 * Moved typekits from rtt_ros_comm and rtt_common_msgs into rtt_ros_integration
 * Added Catkin buildsystem support

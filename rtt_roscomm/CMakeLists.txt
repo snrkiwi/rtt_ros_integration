@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(rtt_roscomm)
 
-find_package(catkin REQUIRED COMPONENTS roscpp rtt_ros)
+find_package(catkin REQUIRED COMPONENTS rtt_ros roscpp)
 
 catkin_package(
-  CATKIN_DEPENDS rtt_ros
+  CATKIN_DEPENDS rtt_ros roscpp
   CFG_EXTRAS GenerateRTTROSCommPackage.cmake
 )
 
@@ -46,11 +46,9 @@ install(
 )
 
 # Install cmake macros
-file(COPY cmake/create_boost_header.py DESTINATION "${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}/cmake")
-install(PROGRAMS cmake/create_boost_header.py DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/cmake)
+install(PROGRAMS scripts/create_boost_header.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
-# Install template files to both install and develspace
-file(COPY src/templates DESTINATION "${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_SHARE_DESTINATION}/src")
+# Install template files
 install(DIRECTORY src/templates DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/src)
 
 # This one will only be used by create_rtt_msgs with `rospack find rtt_roscomm` => no devel-space installation
