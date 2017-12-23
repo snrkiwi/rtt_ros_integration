@@ -4,6 +4,7 @@
 #include <ros/ros.h>
 
 #include <rtt/RTT.hpp>
+#include <rtt/internal/GlobalEngine.hpp>
 #include <rtt/plugin/ServicePlugin.hpp>
 
 //! Abstract ROS Service Proxy
@@ -11,6 +12,7 @@ class ROSServiceProxyBase
 {
 public:
   ROSServiceProxyBase(const std::string &service_name) : service_name_(service_name) { }
+  virtual ~ROSServiceProxyBase() { }
   //! Get the name of the ROS service
   const std::string& getServiceName() const { return service_name_; }
 private:
@@ -33,7 +35,7 @@ public:
     // Link the caller with the operation
     return proxy_operation_caller_->setImplementation(
         operation->getLocalOperation(),
-        owner->engine());
+        RTT::internal::GlobalEngine::Instance());
   }
 
 protected:
@@ -65,6 +67,12 @@ public:
         service_name, 
         &ROSServiceServerProxy<ROS_SERVICE_T>::ros_service_callback, 
         this);
+  }
+
+  ~ROSServiceServerProxy()
+  {
+    // Clean-up advertized ROS services
+    server_.shutdown();     
   }
 
 private:

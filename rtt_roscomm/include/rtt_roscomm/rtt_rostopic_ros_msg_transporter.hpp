@@ -49,6 +49,7 @@
 #ifndef __RTT_ROSCOMM_ROS_MSG_TRANSPORTER_HPP_
 #define __RTT_ROSCOMM_ROS_MSG_TRANSPORTER_HPP_
 
+#include <rtt/rtt-config.h>
 #include <rtt/types/TypeTransporter.hpp>
 #include <rtt/Port.hpp>
 #include <rtt/TaskContext.hpp>
@@ -57,15 +58,37 @@
 
 #include <rtt_roscomm/rtt_rostopic_ros_publish_activity.hpp>
 
+#ifndef RTT_VERSION_GTE
+  #define RTT_VERSION_GTE(major,minor,patch) \
+      ((RTT_VERSION_MAJOR > major) || (RTT_VERSION_MAJOR == major && \
+       (RTT_VERSION_MINOR > minor) || (RTT_VERSION_MINOR == minor && \
+       (RTT_VERSION_PATCH >= patch))))
+#endif
+
 namespace rtt_roscomm {
 
-  using namespace RTT;
+  /**
+   * An adapter that allows to overwrite the corresponding ROS type for a
+   * given Orocos type by specialization.
+   */
+  template <typename T>
+  struct RosMessageAdapter
+  {
+    typedef T OrocosType;
+    typedef T RosType;
+    static const RosType &toRos(const OrocosType &t) { return t; }
+    static const OrocosType &fromRos(const RosType &t) { return t; }
+  };
+
   /**
    * A ChannelElement implementation to publish data over a ros topic
    */
   template<typename T>
-  class RosPubChannelElement: public base::ChannelElement<T>,public RosPublisher
+  class RosPubChannelElement: public RTT::base::ChannelElement<T>, public RosPublisher
   {
+    typedef RosMessageAdapter<T> adapter;
+    typedef typename adapter::RosType RosType;
+
     char hostname[1024];
     std::string topicname;
     ros::NodeHandle ros_node;
@@ -74,7 +97,7 @@ namespace rtt_roscomm {
       //! We must cache the RosPublishActivity object.
     RosPublishActivity::shared_ptr act;
 
-    typename base::ChannelElement<T>::value_t sample;
+    typename RTT::base::ChannelElement<T>::value_t sample;
 
   public:
 
@@ -88,7 +111,7 @@ namespace rtt_roscomm {
      * 
      * @return ChannelElement that will publish data to topics
      */
-    RosPubChannelElement(base::PortInterface* port,const ConnPolicy& policy):
+    RosPubChannelElement(RTT::base::PortInterface* port, const RTT::ConnPolicy& policy) :
       ros_node(),
       ros_node_private("~")
     {
@@ -105,27 +128,27 @@ namespace rtt_roscomm {
         policy.name_id = namestr.str();
       }
       topicname=policy.name_id;
-      Logger::In in(topicname);
+      RTT::Logger::In in(topicname);
 
       if (port->getInterface() && port->getInterface()->getOwner()) {
-        log(Debug)<<"Creating ROS publisher for port "<<port->getInterface()->getOwner()->getName()<<"."<<port->getName()<<" on topic "<<policy.name_id<<endlog();
+        RTT::log(RTT::Debug)<<"Creating ROS publisher for port "<<port->getInterface()->getOwner()->getName()<<"."<<port->getName()<<" on topic "<<policy.name_id<<RTT::endlog();
       } else {
-        log(Debug)<<"Creating ROS publisher for port "<<port->getName()<<" on topic "<<policy.name_id<<endlog();
+        RTT::log(RTT::Debug)<<"Creating ROS publisher for port "<<port->getName()<<" on topic "<<policy.name_id<<RTT::endlog();
       }
 
       // Handle private names
       if(topicname.length() > 1 && topicname.at(0) == '~') {
-        ros_pub = ros_node_private.advertise<T>(policy.name_id.substr(1), policy.size > 0 ? policy.size : 1, policy.init); // minimum 1
+        ros_pub = ros_node_private.advertise<RosType>(policy.name_id.substr(1), policy.size > 0 ? policy.size : 1, policy.init); // minimum 1
       } else {
-        ros_pub = ros_node.advertise<T>(policy.name_id, policy.size > 0 ? policy.size : 1, policy.init); // minimum 1
+        ros_pub = ros_node.advertise<RosType>(policy.name_id, policy.size > 0 ? policy.size : 1, policy.init); // minimum 1
       }
       act = RosPublishActivity::Instance();
       act->addPublisher( this );
     }
 
     ~RosPubChannelElement() {
-      Logger::In in(topicname);
-      log(Debug)<<"Destroying RosPubChannelElement"<<endlog();
+      RTT::Logger::In in(topicname);
+//      RTT::log(RTT::Debug) << "Destroying RosPubChannelElement" << RTT::endlog();
       act->removePublisher( this );
     }
 
@@ -143,13 +166,21 @@ namespace rtt_roscomm {
      * 
      * @param sample 
      * 
-     * @return always true
+     * @return always true/WriteSuccess
      */
-    virtual bool data_sample(typename base::ChannelElement<T>::param_t sample)
+#if RTT_VERSION_GTE(2,8,99)
+    virtual RTT::WriteStatus data_sample(typename RTT::base::ChannelElement<T>::param_t sample)
+    {
+      this->sample = sample;
+      return RTT::WriteSuccess;
+    }
+#else
+    virtual bool data_sample(typename RTT::base::ChannelElement<T>::param_t sample)
     {
       this->sample = sample;
       return true;
     }
+#endif
 
     /** 
      * signal from the port that new data is availabe to publish
@@ -157,22 +188,30 @@ namespace rtt_roscomm {
      * @return true if publishing succeeded
      */
     bool signal(){
-      //Logger::In in(topicname);
-      //log(Debug)<<"Requesting publish"<<endlog();
+      //RTT::Logger::In in(topicname);
+      //RTT::log(RTT::Debug) << "Requesting publish" << RTT::endlog();
       return act->trigger();
     }
     
     void publish(){
       // this read should always succeed since signal() means 'data available in a data element'.
-      typename base::ChannelElement<T>::shared_ptr input = this->getInput();
-      while( input && (input->read(sample,false) == NewData) )
+      typename RTT::base::ChannelElement<T>::shared_ptr input = this->getInput();
+      while( input && (input->read(sample,false) == RTT::NewData) )
         write(sample);
     }
 
-    bool write(typename base::ChannelElement<T>::param_t sample)
+#if RTT_VERSION_GTE(2,8,99)
+    RTT::WriteStatus write(typename RTT::base::ChannelElement<T>::param_t sample)
+#else
+    bool write(typename RTT::base::ChannelElement<T>::param_t sample)
+#endif
     {
-      ros_pub.publish(sample);
+      ros_pub.publish(adapter::toRos(sample));
+#if RTT_VERSION_GTE(2,8,99)
+      return RTT::WriteSuccess;
+#else
       return true;
+#endif
     }
     
   };
@@ -181,8 +220,11 @@ namespace rtt_roscomm {
    * A ChannelElement implementation to subscribe to data over a ros topic
    */
   template<typename T>
-  class RosSubChannelElement: public base::ChannelElement<T>
+  class RosSubChannelElement: public RTT::base::ChannelElement<T>
   {
+    typedef RosMessageAdapter<T> adapter;
+    typedef typename adapter::RosType RosType;
+
     std::string topicname;
     ros::NodeHandle ros_node;
     ros::NodeHandle ros_node_private;
@@ -198,67 +240,91 @@ namespace rtt_roscomm {
      * 
      * @return ChannelElement that will publish data to topics
      */
-    RosSubChannelElement(base::PortInterface* port, const ConnPolicy& policy) :
+    RosSubChannelElement(RTT::base::PortInterface* port, const RTT::ConnPolicy& policy) :
       ros_node(),
       ros_node_private("~")
     {
       topicname=policy.name_id;
-      Logger::In in(topicname);
+      RTT::Logger::In in(topicname);
       if (port->getInterface() && port->getInterface()->getOwner()) {
-        log(Debug)<<"Creating ROS subscriber for port "<<port->getInterface()->getOwner()->getName()<<"."<<port->getName()<<" on topic "<<policy.name_id<<endlog();
+        RTT::log(RTT::Debug)<<"Creating ROS subscriber for port "<<port->getInterface()->getOwner()->getName()<<"."<<port->getName()<<" on topic "<<policy.name_id<<RTT::endlog();
       } else {
-        log(Debug)<<"Creating ROS subscriber for port "<<port->getName()<<" on topic "<<policy.name_id<<endlog();
+        RTT::log(RTT::Debug)<<"Creating ROS subscriber for port "<<port->getName()<<" on topic "<<policy.name_id<<RTT::endlog();
       }
       if(topicname.length() > 1 && topicname.at(0) == '~') {
-        ros_sub = ros_node_private.subscribe(policy.name_id.substr(1),policy.size,&RosSubChannelElement::newData,this);
+        ros_sub = ros_node_private.subscribe(policy.name_id.substr(1), policy.size > 0 ? policy.size : 1, &RosSubChannelElement::newData, this); // minimum queue_size 1
       } else {
-        ros_sub = ros_node.subscribe(policy.name_id,policy.size,&RosSubChannelElement::newData,this);
+        ros_sub = ros_node.subscribe(policy.name_id, policy.size > 0 ? policy.size : 1, &RosSubChannelElement::newData, this); // minimum queue_size 1
       }
-      this->ref();
     }
 
     ~RosSubChannelElement() {
-      Logger::In in(topicname);
-      log(Debug)<<"Destroying RosSubChannelElement"<<endlog();
+      RTT::Logger::In in(topicname);
+//      RTT::log(RTT::Debug)<<"Destroying RosSubChannelElement"<<RTT::endlog();
     }
 
     virtual bool inputReady() {
       return true;
     }
-    /** 
+
+    /**
      * Callback function for the ROS subscriber, it will trigger the ChannelElement's signal function
      * 
      * @param msg The received message
      */
-    void newData(const T& msg){
-      typename base::ChannelElement<T>::shared_ptr output = this->getOutput();
+    void newData(const RosType& msg){
+      typename RTT::base::ChannelElement<T>::shared_ptr output = this->getOutput();
       if (output)
-          output->write(msg);
+          output->write(adapter::fromRos(msg));
     }
   };
 
   template <class T>
   class RosMsgTransporter : public RTT::types::TypeTransporter
   {
-    virtual base::ChannelElementBase::shared_ptr createStream (base::PortInterface *port, const ConnPolicy &policy, bool is_sender) const{
-      base::ChannelElementBase::shared_ptr buf = internal::ConnFactory::buildDataStorage<T>(policy);
-      base::ChannelElementBase::shared_ptr tmp;
-      if(is_sender){
-        tmp = base::ChannelElementBase::shared_ptr(new RosPubChannelElement<T>(port,policy));
+    virtual RTT::base::ChannelElementBase::shared_ptr createStream (RTT::base::PortInterface *port, const RTT::ConnPolicy &policy, bool is_sender) const{
+      RTT::base::ChannelElementBase::shared_ptr channel;
+
+      // Pull semantics are not supported by the ROS message transport.
+      if (policy.pull) {
+          RTT::log(RTT::Error) << "Pull connections are not supported by the ROS message transport." << RTT::endlog();
+          return RTT::base::ChannelElementBase::shared_ptr();
+      }
+
+      // Check if this node is initialized
+      if (!ros::ok()) {
+          RTT::log(RTT::Error) << "Cannot create ROS message transport because the node is not initialized or already shutting down. Did you import package rtt_rosnode before?" << RTT::endlog();
+          return RTT::base::ChannelElementBase::shared_ptr();
+      }
+
+      if (is_sender){
+        channel = new RosPubChannelElement<T>(port, policy);
+
         if (policy.type == RTT::ConnPolicy::UNBUFFERED){
-          log(Debug) << "Creating unbuffered publisher connection for port " << port->getName() << ". This may not be real-time safe!" << endlog();
-          return tmp;
+          RTT::log(RTT::Debug) << "Creating unbuffered publisher connection for port " << port->getName() << ". This may not be real-time safe!" << RTT::endlog();
+          return channel;
         }
-        if (!buf) return base::ChannelElementBase::shared_ptr();
-        buf->setOutput(tmp);
+
+        RTT::base::ChannelElementBase::shared_ptr buf = RTT::internal::ConnFactory::buildDataStorage<T>(policy);
+        if (!buf) return RTT::base::ChannelElementBase::shared_ptr();
+#if RTT_VERSION_GTE(2,8,99)
+        buf->connectTo(channel);
+#else
+        buf->setOutput(channel);
+#endif
         return buf;
+
+      } else {
+        channel = new RosSubChannelElement<T>(port, policy);
+
+#if !RTT_VERSION_GTE(2,8,99)
+        RTT::base::ChannelElementBase::shared_ptr buf = RTT::internal::ConnFactory::buildDataStorage<T>(policy);
+        if (!buf) return RTT::base::ChannelElementBase::shared_ptr();
+        channel->setOutput(buf);
+#endif
       }
-      else {
-        if (!buf) return base::ChannelElementBase::shared_ptr();
-        tmp = new RosSubChannelElement<T>(port,policy);
-        tmp->setOutput(buf);
-        return tmp;
-      }
+
+      return channel;
     }
   };
 } 
